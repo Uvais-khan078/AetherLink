@@ -1,6 +1,7 @@
-package com.omega.aetherlink
+package com.aetherlink.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
@@ -18,43 +19,102 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.aetherlink.app.databinding.ActivityMainBinding
+import com.aetherlink.app.databinding.ItemMessageBinding
 import com.google.android.material.snackbar.Snackbar
-import com.omega.aetherlink.databinding.ActivityMainBinding
-import com.omega.aetherlink.databinding.ItemMessageBinding
 import com.xwray.groupie.GroupAdapter
 import com.xwray.groupie.GroupieViewHolder
 import com.xwray.groupie.viewbinding.BindableItem
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.*
+import java.util.UUID
 
 
 private const val REQUEST_PERMISSIONS = 200
 
 class MainActivity : AppCompatActivity() {
 
-    private val TAG: String = "MAIN"
+    private val TAG: String = "AetherLink"
     private lateinit var binding: ActivityMainBinding
     private var bluetoothAdapter: BluetoothAdapter? = null
     private val mUUID = UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
     private var mPairedDevices = listOf<BluetoothDevice>()
     private lateinit var mMessagesAdapter: GroupAdapter<GroupieViewHolder>
-
     private lateinit var mHandler: Handler
-
+    private var suppressBluetoothToggleCallback = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Startup trace to confirm activity launched
-        Log.d(TAG, "onCreate called for MainActivity")
+        Log.d(TAG, "MainActivity launched")
         Toast.makeText(this, "AetherLink started", Toast.LENGTH_SHORT).show()
 
-        // Ensure required runtime permissions are granted before proceeding
-        ensurePermissionsThen { setup(); enableBluetooth() }
+        setupBluetoothToggle()
+        ensurePermissionsThen {
+            setup()
+            syncBluetoothUiState()
+            if (isBluetoothEnabled()) startBluetoothFlow()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        syncBluetoothUiState()
+    }
+
+    private fun setupBluetoothToggle() {
+        binding.switchBluetoothPower.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressBluetoothToggleCallback) return@setOnCheckedChangeListener
+            if (isChecked) enableBluetooth() else disableBluetooth()
+        }
+    }
+
+    private fun setBluetoothToggleChecked(checked: Boolean) {
+        suppressBluetoothToggleCallback = true
+        binding.switchBluetoothPower.isChecked = checked
+        suppressBluetoothToggleCallback = false
+    }
+
+    private fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
+
+    private fun syncBluetoothUiState() {
+        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+        val enabled = isBluetoothEnabled()
+        setBluetoothToggleChecked(enabled)
+
+        if (bluetoothAdapter == null) {
+            binding.tvDeviceName.text = "Unknown"
+            binding.tvDeviceAddress.text = "Hidden"
+            return
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            binding.tvDeviceName.text = bluetoothAdapter?.name ?: "Unknown"
+            binding.tvDeviceAddress.text = "Hidden"
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun disableBluetooth() {
+        bluetoothAdapter?.let { adapter ->
+            if (adapter.isEnabled) {
+                adapter.disable()
+                Snackbar.make(binding.root, "Bluetooth turned off", Snackbar.LENGTH_SHORT).show()
+            }
+        }
+        clearBluetoothUiState()
+        setBluetoothToggleChecked(false)
+    }
+
+    private fun clearBluetoothUiState() {
+        binding.tvDeviceName.text = "Unknown"
+        binding.tvDeviceAddress.text = "Hidden"
+        binding.tvConnectionLabel.text = getString(R.string.select_device)
+        binding.spinnerConnections.adapter = null
+        mPairedDevices = listOf()
     }
 
     private fun ensurePermissionsThen(action: () -> Unit) {
@@ -82,9 +142,11 @@ class MainActivity : AppCompatActivity() {
             val denied = grantResults.any { it != PackageManager.PERMISSION_GRANTED }
             if (denied) {
                 Snackbar.make(binding.root, "Permissions required to use Bluetooth", Snackbar.LENGTH_LONG).show()
+                setBluetoothToggleChecked(false)
             } else {
                 setup()
-                enableBluetooth()
+                syncBluetoothUiState()
+                if (isBluetoothEnabled()) startBluetoothFlow() else enableBluetooth()
             }
         }
     }
@@ -96,189 +158,177 @@ class MainActivity : AppCompatActivity() {
             mMessagesAdapter = GroupAdapter()
             mMessagesAdapter.add(ChatMessageItem("Begin Conversation By Connecting To Another Device.....", "Help", resources.getColor(R.color.white, null)))
             rvResponse.adapter = mMessagesAdapter
+
+            btnScan.setOnClickListener {
+                setupBluetoothClientConnection()
+                Snackbar.make(root, "Scanning paired devices...", Snackbar.LENGTH_SHORT).show()
+            }
+
+            btnSettings.setOnClickListener {
+                startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+            }
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun enableBluetooth() {
-        // There's one Bluetooth adapter for the entire system, call getDefaultAdapter to get one
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
         if (bluetoothAdapter == null) {
-            Snackbar.make(
-                binding.root,
-                "Your Device Does Not Support Bluetooth.",
-                Snackbar.LENGTH_LONG
-            ).show()
+            Snackbar.make(binding.root, "Your Device Does Not Support Bluetooth.", Snackbar.LENGTH_LONG).show()
+            setBluetoothToggleChecked(false)
             return
         }
 
-        // Accessing adapter properties requires BLUETOOTH_CONNECT on Android 12+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            binding.tvDeviceName.text = bluetoothAdapter!!.name
-            binding.tvDeviceAddress.text = bluetoothAdapter!!.address
+            binding.tvDeviceName.text = bluetoothAdapter!!.name ?: "Unknown"
+            binding.tvDeviceAddress.text = "Hidden"
         }
 
         if (bluetoothAdapter?.isEnabled == false) {
-            val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT)
+            startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), REQUEST_ENABLE_BT)
+            return
         }
 
-        setupBluetoothClientConnection()
+        startBluetoothFlow()
+    }
 
+    @SuppressLint("MissingPermission")
+    private fun startBluetoothFlow() {
+        syncBluetoothUiState()
+        setupBluetoothClientConnection()
         AcceptThread().start()
     }
 
+    @SuppressLint("MissingPermission")
     private fun setupBluetoothClientConnection() {
         val pairedDevices: Set<BluetoothDevice>? = bluetoothAdapter?.bondedDevices
-        val allPairs: MutableList<String> = pairedDevices?.map { device ->
-            val deviceName = device.name
-            return@map deviceName
-        }?.toMutableList() ?: mutableListOf()
+        val allPairs: MutableList<String> = pairedDevices?.map { device -> device.name ?: "Unknown Device" }?.toMutableList() ?: mutableListOf()
 
         allPairs.add(0, "Select Connection")
         mPairedDevices = pairedDevices?.toList() ?: listOf()
 
-        val arrayAdapter =
-            ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, allPairs)
+        val arrayAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, allPairs)
         binding.spinnerConnections.adapter = arrayAdapter
         binding.spinnerConnections.setSelection(0)
-        binding.spinnerConnections.setOnItemSelectedListener(object :
-            AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(
-                parent: AdapterView<*>?,
-                view: View?,
-                position: Int,
-                id: Long
-            ) {
+        binding.spinnerConnections.setOnItemSelectedListener(object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (position != 0) {
                     val selectedConnection: BluetoothDevice = pairedDevices!!.toList()[position - 1]
-
-                    val connectionSocket = ConnectThread(selectedConnection)
-                    connectionSocket.start()
+                    ConnectThread(selectedConnection).start()
                 }
             }
 
-            override fun onNothingSelected(parent: AdapterView<*>?) {
-            }
-
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
         })
     }
-
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_ENABLE_BT && resultCode == RESULT_OK) {
             Snackbar.make(binding.root, "Devices Bluetooth Enabled", Snackbar.LENGTH_LONG).show()
+            syncBluetoothUiState()
+            startBluetoothFlow()
+        } else if (requestCode == REQUEST_ENABLE_BT) {
+            setBluetoothToggleChecked(false)
+            binding.tvConnectionLabel.text = getString(R.string.select_device)
         }
     }
 
+    @Suppress("MissingPermission")
     private inner class AcceptThread : Thread() {
-
         private val mmServerSocket: BluetoothServerSocket? by lazy(LazyThreadSafetyMode.NONE) {
             bluetoothAdapter?.listenUsingInsecureRfcommWithServiceRecord(
-                bluetoothAdapter!!.name,
+                bluetoothAdapter?.name ?: "AetherLink",
                 mUUID
             )
         }
 
+        fun createServerSocket(): BluetoothServerSocket? = mmServerSocket
+
         override fun run() {
-            // Keep listening until exception occurs or a socket is returned.
             var shouldLoop = true
             while (shouldLoop) {
                 val socket: BluetoothSocket? = try {
                     Log.d(TAG, "Establishing new Connection")
-                    mmServerSocket?.accept()
+                    createServerSocket()?.accept()
                 } catch (e: IOException) {
                     Log.e(TAG, "Socket's accept() method failed", e)
                     shouldLoop = false
                     null
+                } catch (se: SecurityException) {
+                    Log.e(TAG, "Bluetooth permission denied", se)
+                    shouldLoop = false
+                    null
                 }
                 socket?.also { bluetoothSocket ->
-                    val client = bluetoothSocket.remoteDevice.name
+                    val client = bluetoothSocket.remoteDevice.name ?: "Unknown Device"
                     manageServerSocketConnection(bluetoothSocket, client)
                     mHandler.post {
-                        val idx =
-                            mPairedDevices.indexOfFirst { it.name == client }
+                        val idx = mPairedDevices.indexOfFirst { it.name == client }
                         if (idx != -1) {
                             binding.spinnerConnections.setSelection(idx + 1)
-                            binding.tvConnectionLabel.text = "Connected To"
+                            binding.tvConnectionLabel.text = getString(R.string.connected_to)
                         }
-                        Snackbar.make(
-                            binding.root,
-                            "Connection Established With $client",
-                            Snackbar.LENGTH_LONG
-                        ).show()
+                        Snackbar.make(binding.root, "Connection Established With $client", Snackbar.LENGTH_LONG).show()
                     }
-                    mmServerSocket?.close()
+                    createServerSocket()?.close()
                     shouldLoop = false
                 }
             }
         }
 
-        // Closes the connect socket and causes the thread to finish.
         fun cancel() {
             try {
-                mmServerSocket?.close()
+                createServerSocket()?.close()
             } catch (e: IOException) {
                 Log.e(TAG, "Could not close the connect socket", e)
             }
         }
     }
 
+    @Suppress("MissingPermission")
     private inner class ConnectThread(val device: BluetoothDevice) : Thread() {
-
         private val mmSocket: BluetoothSocket? by lazy(LazyThreadSafetyMode.NONE) {
             device.createRfcommSocketToServiceRecord(mUUID)
         }
 
-        public override fun run() {
-            // Cancel discovery because it otherwise slows down the connection.
+        fun createClientSocket(): BluetoothSocket? = mmSocket
+
+        override fun run() {
             bluetoothAdapter?.cancelDiscovery()
 
-            mmSocket?.let { socket ->
-                // Connect to the remote device through the socket. This call blocks
-                // until it succeeds or throws an exception.
+            createClientSocket()?.let { socket ->
                 try {
                     socket.connect()
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to connect", e)
                 }
 
-                // The connection attempt succeeded. Perform work associated with
-                // the connection in a separate thread.
-                val client = socket.remoteDevice.name
+                val client = socket.remoteDevice.name ?: "Unknown Device"
                 manageServerSocketConnection(socket, client)
-                Snackbar.make(
-                    binding.root,
-                    "Connection Established With $client",
-                    Snackbar.LENGTH_LONG
-                ).show()
+                Snackbar.make(binding.root, "Connection Established With $client", Snackbar.LENGTH_LONG).show()
             }
         }
 
-        // Closes the client socket and causes the thread to finish.
         fun cancel() {
             try {
-                mmSocket?.close()
+                createClientSocket()?.close()
             } catch (e: IOException) {
                 Log.e(TAG, "Could not close the client socket", e)
             }
         }
     }
 
-
-    private inner class ConnectedThread(private val mmSocket: BluetoothSocket, val opName: String) :
-        Thread() {
-
+    private inner class ConnectedThread(private val mmSocket: BluetoothSocket, val opName: String) : Thread() {
+        @SuppressLint("MissingPermission")
         private val mmInStream: InputStream = mmSocket.inputStream
+        @SuppressLint("MissingPermission")
         private val mmOutStream: OutputStream = mmSocket.outputStream
-        private val mmBuffer: ByteArray = ByteArray(1024) // mmBuffer store for the stream
+        private val mmBuffer: ByteArray = ByteArray(1024)
 
         override fun run() {
-            var numBytes: Int // bytes returned from read()
-
-            // Keep listening to the InputStream until an exception occurs.
+            var numBytes: Int
             while (true) {
-                // Read from the InputStream.
                 numBytes = try {
                     mmInStream.read(mmBuffer)
                 } catch (e: IOException) {
@@ -286,40 +336,27 @@ class MainActivity : AppCompatActivity() {
                     break
                 }
 
-                // Send the obtained bytes to the UI activity.
-                val readMsg = mHandler.obtainMessage(
-                    MESSAGE_READ, numBytes, -1,
-                    opName to mmBuffer
-                )
+                val readMsg = mHandler.obtainMessage(MESSAGE_READ, numBytes, -1, opName to mmBuffer)
                 readMsg.sendToTarget()
             }
         }
 
-        // Call this from the main activity to send data to the remote device.
         fun write(bytes: ByteArray) {
             try {
                 mmOutStream.write(bytes)
             } catch (e: IOException) {
                 Log.e(TAG, "Error occurred when sending data", e)
-
-                // Send a failure message back to the activity.
                 val writeErrorMsg = mHandler.obtainMessage(MESSAGE_TOAST)
-                val bundle = Bundle().apply {
-                    putString("toast", "Couldn't send data to the other device")
-                }
+                val bundle = Bundle().apply { putString("toast", "Couldn't send data to the other device") }
                 writeErrorMsg.data = bundle
                 mHandler.sendMessage(writeErrorMsg)
                 return
             }
 
-            // Share the sent message with the UI activity.
-            val writtenMsg = mHandler.obtainMessage(
-                MESSAGE_WRITE, -1, -1, mmBuffer
-            )
+            val writtenMsg = mHandler.obtainMessage(MESSAGE_WRITE, -1, -1, mmBuffer)
             writtenMsg.sendToTarget()
         }
 
-        // Call this method from the main activity to shut down the connection.
         fun cancel() {
             try {
                 mmSocket.close()
@@ -329,22 +366,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
+    @SuppressLint("MissingPermission")
     private fun manageServerSocketConnection(socket: BluetoothSocket, name: String) {
         mHandler = Handler(this.mainLooper, Handler.Callback {
             try {
-                val response = it.obj as Pair<String, ByteArray>
+                val response = it.obj as? Pair<String, ByteArray> ?: return@Callback false
                 val from = response.first
                 val msg = response.second.decodeToString()
                 Toast.makeText(this, "New Message Received", Toast.LENGTH_SHORT).show()
-                mMessagesAdapter.add(
-                    ChatMessageItem(
-                        msg,
-                        from,
-                        resources.getColor(R.color.reply, null)
-                    )
-                )
-
+                mMessagesAdapter.add(ChatMessageItem(msg, from, resources.getColor(R.color.reply, null)))
                 return@Callback true
             } catch (e: Exception) {
                 return@Callback false
@@ -358,25 +388,15 @@ class MainActivity : AppCompatActivity() {
                 btnSendToConnected.setOnClickListener {
                     val text = etReply.text.toString()
                     communicationService.write(text.encodeToByteArray())
-                    mMessagesAdapter.add(
-                        ChatMessageItem(
-                            text,
-                            bluetoothAdapter!!.name,
-                            resources.getColor(R.color.response, null)
-                        )
-                    )
+                    mMessagesAdapter.add(ChatMessageItem(text, bluetoothAdapter?.name ?: "AetherLink", resources.getColor(R.color.response, null)))
                     etReply.setText("")
                 }
             }
         }
     }
 
-
     companion object {
         const val REQUEST_ENABLE_BT = 100
-
-        // Defines several constants used when transmitting messages between the
-        // service and the UI.
         const val MESSAGE_READ: Int = 0
         const val MESSAGE_WRITE: Int = 1
         const val MESSAGE_TOAST: Int = 2
@@ -396,9 +416,7 @@ class ChatMessageItem(
         }
     }
 
-    override fun getLayout(): Int {
-        return R.layout.item_message
-    }
+    override fun getLayout(): Int = R.layout.item_message
 
     override fun initializeViewBinding(view: View): ItemMessageBinding {
         return ItemMessageBinding.bind(view)

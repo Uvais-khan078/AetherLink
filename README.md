@@ -4,4 +4,4 @@
 
 ![sample-image](/images/blue-chat-app.png)
 
-AetherLink is a simple Android app that demonstrates Bluetooth-based messaging between devices. It's a renamed fork of the original Bluetooth chat sample — the app display name and themes have been updated to AetherLink.
+AetherLink is a simple Android app demonstrating Bluetooth-based messaging between devices. This copy has been personalized and cleaned for reuse.

@@ -11,7 +11,7 @@ android {
     compileSdkVersion 33
 
     defaultConfig {
-        applicationId "com.omega.aetherlink"
+        applicationId "com.aetherlink.app"
         minSdkVersion 27
         targetSdkVersion 33
         versionCode 1

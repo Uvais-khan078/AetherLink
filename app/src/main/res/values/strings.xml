@@ -1,4 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AetherLink</string>
+    <string name="connected_to">Connected To</string>
+
+    <string name="back">Back</string>
+    <string name="settings">Settings</string>
+    <string name="device_settings">Device Settings</string>
+    <string name="device_name">Device Name</string>
+    <string name="default_device_name">My Device</string>
+    <string name="edit">Edit</string>
+    <string name="enter_device_name">Enter device name</string>
+    <string name="save">Save</string>
+    <string name="encryption">Encryption</string>
+    <string name="end_to_end_encryption">End-to-End Encryption</string>
+    <string name="enabled">Enabled</string>
+    <string name="encryption_desc">All messages are encrypted using AES-256 encryption. Only you and your recipients can read them.</string>
+    <string name="about_aetherlink">About AetherLink</string>
+    <string name="version_label">Version:</string>
+    <string name="protocol_label">Protocol:</string>
+    <string name="protocol_value">Bluetooth Low Energy (BLE)</string>
+    <string name="about_desc">AetherLink creates a decentralized mesh network using Bluetooth. Messages can hop between devices to reach destinations beyond direct radio range, creating a resilient communication network without internet or cellular infrastructure.</string>
+    <string name="features_label">Features:</string>
+    <string name="features_list">• Peer-to-peer encrypted messaging\n• Automatic message relaying\n• No server or internet required\n• Works offline</string>
+
+    <string name="settings_screen_title">Settings</string>
+    <string name="device_settings_title">Device Settings</string>
+    <string name="encryption_title">Encryption</string>
+    <string name="about_title">About AetherLink</string>
+    <string name="back_description">Go back</string>
+    <string name="select_device">Select Device</string>
 </resources>
